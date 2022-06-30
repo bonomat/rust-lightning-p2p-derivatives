@@ -288,6 +288,10 @@ pub trait Watch<ChannelSigner: WriteableEcdsaChannelSigner> {
 	/// [`ChannelManager`]: crate::ln::channelmanager::ChannelManager
 	fn update_channel(&self, funding_txo: OutPoint, update: &ChannelMonitorUpdate) -> ChannelMonitorUpdateStatus;
 
+	/// Update the outpoint funding the channel. To be used when the channel is split into two to
+	/// open a DLC channel with the same funding transaction.
+	fn update_channel_funding_txo(&self, old_funding_txo: OutPoint, new_funding_txo: OutPoint, channel_value_satoshis: u64) -> ChannelMonitorUpdateStatus;
+
 	/// Returns any monitor events since the last call. Subsequent calls must only return new
 	/// events.
 	///

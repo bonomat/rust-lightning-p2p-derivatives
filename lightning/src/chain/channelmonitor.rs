@@ -757,6 +757,7 @@ pub(crate) struct ChannelMonitorImpl<Signer: WriteableEcdsaChannelSigner> {
 	channel_keys_id: [u8; 32],
 	holder_revocation_basepoint: PublicKey,
 	funding_info: (OutPoint, Script),
+	original_funding_info: Option<(OutPoint, Script)>,
 	current_counterparty_commitment_txid: Option<Txid>,
 	prev_counterparty_commitment_txid: Option<Txid>,
 
@@ -947,6 +948,13 @@ impl<Signer: WriteableEcdsaChannelSigner> Writeable for ChannelMonitorImpl<Signe
 		writer.write_all(&self.funding_info.0.txid[..])?;
 		writer.write_all(&self.funding_info.0.index.to_be_bytes())?;
 		self.funding_info.1.write(writer)?;
+		if let Some(ref original_funding_info) = self.original_funding_info {
+			writer.write_all(&[0; 1])?;
+			original_funding_info.0.write(writer)?;
+			original_funding_info.1.write(writer)?;
+		} else {
+			writer.write_all(&[1; 1])?;
+		}
 		self.current_counterparty_commitment_txid.write(writer)?;
 		self.prev_counterparty_commitment_txid.write(writer)?;
 
@@ -1191,6 +1199,7 @@ impl<Signer: WriteableEcdsaChannelSigner> ChannelMonitor<Signer> {
 			channel_keys_id,
 			holder_revocation_basepoint,
 			funding_info,
+			original_funding_info: None,
 			current_counterparty_commitment_txid: None,
 			prev_counterparty_commitment_txid: None,
 
@@ -1277,6 +1286,23 @@ impl<Signer: WriteableEcdsaChannelSigner> ChannelMonitor<Signer> {
 			txid, htlc_outputs, commitment_number, their_per_commitment_point, logger)
 	}
 
+	pub(crate) fn update_funding_info(&self, fund_outpoint: OutPoint, channel_value_satoshis: u64) -> Script {
+		let mut inner = self.inner.lock().unwrap();
+		let script = inner.funding_info.1.clone();
+		if let Some(original) = inner.original_funding_info.as_ref() {
+			if fund_outpoint == original.0 {
+				inner.original_funding_info = None;
+			}
+		} else {
+			inner.original_funding_info = Some((inner.funding_info.0.clone(), inner.funding_info.1.clone()));
+		}
+		inner.outputs_to_watch.insert(fund_outpoint.txid, vec![(fund_outpoint.index as u32, script.clone())]);
+		inner.funding_info = (fund_outpoint, script.clone());
+		inner.channel_value_satoshis = channel_value_satoshis;
+		inner.onchain_tx_handler.signer.set_channel_value_satoshis(channel_value_satoshis);
+		script
+	}
+
 	#[cfg(test)]
 	fn provide_latest_holder_commitment_tx(
 		&self, holder_commitment_tx: HolderCommitmentTransaction,
@@ -1331,6 +1357,11 @@ impl<Signer: WriteableEcdsaChannelSigner> ChannelMonitor<Signer> {
 	/// Gets the funding transaction outpoint of the channel this ChannelMonitor is monitoring for.
 	pub fn get_funding_txo(&self) -> (OutPoint, Script) {
 		self.inner.lock().unwrap().get_funding_txo().clone()
+	}
+
+	///
+	pub fn get_original_funding_txo(&self) -> (OutPoint, Script) {
+		self.inner.lock().unwrap().get_original_funding_txo().clone()
 	}
 
 	/// Gets a list of txids, with their output scripts (in the order they appear in the
@@ -1499,6 +1530,11 @@ impl<Signer: WriteableEcdsaChannelSigner> ChannelMonitor<Signer> {
 	pub fn get_latest_holder_commitment_txn<L: Deref>(&self, logger: &L) -> Vec<Transaction>
 	where L::Target: Logger {
 		self.inner.lock().unwrap().get_latest_holder_commitment_txn(logger)
+	}
+
+	pub(crate) fn get_latest_holder_commitment_txn_internal<L: Deref>(&self, logger: &L) -> Vec<Transaction>
+	where L::Target: Logger {
+		self.inner.lock().unwrap().get_latest_holder_commitment_txn_internal(logger)
 	}
 
 	/// Unsafe test-only version of get_latest_holder_commitment_txn used by our test framework
@@ -2768,6 +2804,10 @@ impl<Signer: WriteableEcdsaChannelSigner> ChannelMonitorImpl<Signer> {
 		&self.funding_info
 	}
 
+	pub fn get_original_funding_txo(&self) -> &(OutPoint, Script) {
+		&self.original_funding_info.as_ref().unwrap_or(&self.funding_info)
+	}
+
 	pub fn get_outputs_to_watch(&self) -> &HashMap<Txid, Vec<(u32, Script)>> {
 		// If we've detected a counterparty commitment tx on chain, we must include it in the set
 		// of outputs to watch for spends of, otherwise we're likely to lose user funds. Because
@@ -3298,8 +3338,12 @@ impl<Signer: WriteableEcdsaChannelSigner> ChannelMonitorImpl<Signer> {
 	}
 
 	pub fn get_latest_holder_commitment_txn<L: Deref>(&mut self, logger: &L) -> Vec<Transaction> where L::Target: Logger {
-		log_debug!(logger, "Getting signed latest holder commitment transaction!");
 		self.holder_tx_signed = true;
+		self.get_latest_holder_commitment_txn_internal(logger)
+	}
+
+	pub(crate) fn get_latest_holder_commitment_txn_internal<L: Deref>(&mut self, logger: &L) -> Vec<Transaction> where L::Target: Logger {
+		log_debug!(logger, "Getting signed latest holder commitment transaction!");
 		let commitment_tx = self.onchain_tx_handler.get_fully_signed_holder_tx(&self.funding_redeemscript);
 		let txid = commitment_tx.txid();
 		let mut holder_transactions = vec![commitment_tx];
@@ -3466,7 +3510,14 @@ impl<Signer: WriteableEcdsaChannelSigner> ChannelMonitorImpl<Signer> {
 				// (except for HTLC transactions for channels with anchor outputs), which is an easy
 				// way to filter out any potential non-matching txn for lazy filters.
 				let prevout = &tx.input[0].previous_output;
-				if prevout.txid == self.funding_info.0.txid && prevout.vout == self.funding_info.0.index as u32 {
+				let match_prevout = |outpoint: &OutPoint| {
+					prevout.txid == outpoint.txid && prevout.vout == outpoint.index as u32
+				};
+				let is_split = tx.output.len() == 2 && tx.output[0].script_pubkey == tx.output[1].script_pubkey;
+				let is_match = match_prevout(&self.funding_info.0) ||
+					(self.original_funding_info.is_some() && match_prevout(&self.original_funding_info.as_ref().unwrap().0) && !is_split);
+
+				if is_match {
 					let mut balance_spendable_csv = None;
 					log_info!(logger, "Channel {} closed by funding output spend in txid {}.",
 						&self.funding_info.0.to_channel_id(), txid);
@@ -4219,6 +4270,16 @@ impl<'a, 'b, ES: EntropySource, SP: SignerProvider> ReadableArgs<(&'a ES, &'b SP
 			index: Readable::read(reader)?,
 		};
 		let funding_info = (outpoint, Readable::read(reader)?);
+		let original_funding_info = match <u8 as Readable>::read(reader)? {
+			0 => {
+				let outpoint = Readable::read(reader)?;
+				let script = Readable::read(reader)?;
+				Some((outpoint, script))
+			},
+			1 => { None },
+			_ => return Err(DecodeError::InvalidValue),
+		};
+
 		let current_counterparty_commitment_txid = Readable::read(reader)?;
 		let prev_counterparty_commitment_txid = Readable::read(reader)?;
 
@@ -4428,6 +4489,7 @@ impl<'a, 'b, ES: EntropySource, SP: SignerProvider> ReadableArgs<(&'a ES, &'b SP
 			channel_keys_id,
 			holder_revocation_basepoint,
 			funding_info,
+			original_funding_info,
 			current_counterparty_commitment_txid,
 			prev_counterparty_commitment_txid,
 
@@ -4683,7 +4745,8 @@ mod tests {
 				selected_contest_delay: 67,
 			}),
 			funding_outpoint: Some(funding_outpoint),
-			channel_type_features: ChannelTypeFeatures::only_static_remote_key()
+			channel_type_features: ChannelTypeFeatures::only_static_remote_key(),
+			original_funding_outpoint: None,
 		};
 		// Prune with one old state and a holder commitment tx holding a few overlaps with the
 		// old state.

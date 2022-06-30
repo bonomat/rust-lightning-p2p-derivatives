@@ -67,6 +67,11 @@ pub enum APIError {
 		/// The incompatible shutdown script.
 		script: ShutdownScript,
 	},
+	/// Error generated outside of LDK
+	ExternalError {
+		/// A human-readable error message
+		err: String,
+	}
 }
 
 impl fmt::Debug for APIError {
@@ -79,6 +84,9 @@ impl fmt::Debug for APIError {
 			APIError::MonitorUpdateInProgress => f.write_str("Client indicated a channel monitor update is in progress but not yet complete"),
 			APIError::IncompatibleShutdownScript { ref script } => {
 				write!(f, "Provided a scriptpubkey format not accepted by peer: {}", script)
+			},
+			APIError::ExternalError { ref err } => {
+				write!(f, "{}", err)
 			},
 		}
 	}
@@ -94,6 +102,7 @@ impl_writeable_tlv_based_enum_upgradable!(APIError,
 	(6, ChannelUnavailable) => { (0, err, required), },
 	(8, MonitorUpdateInProgress) => {},
 	(10, IncompatibleShutdownScript) => { (0, script, required), },
+	(12, ExternalError) => { (0, err, required), },
 );
 
 #[inline]

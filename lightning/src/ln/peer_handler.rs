@@ -2227,14 +2227,14 @@ impl<Descriptor: SocketDescriptor, CM: Deref, RM: Deref, OM: Deref, L: Deref, CM
 
 	fn do_disconnect(&self, mut descriptor: Descriptor, peer: &Peer, reason: &'static str) {
 		if !peer.handshake_complete() {
-			log_trace!(self.logger, "Disconnecting peer which hasn't completed handshake due to {}", reason);
+			log_debug!(self.logger, "Disconnecting peer which hasn't completed handshake due to {}", reason);
 			descriptor.disconnect_socket();
 			return;
 		}
 
 		debug_assert!(peer.their_node_id.is_some());
 		if let Some((node_id, _)) = peer.their_node_id {
-			log_trace!(self.logger, "Disconnecting peer with id {} due to {}", node_id, reason);
+			log_debug!(self.logger, "Disconnecting peer with id {} due to {}", node_id, reason);
 			self.message_handler.chan_handler.peer_disconnected(&node_id);
 			self.message_handler.onion_message_handler.peer_disconnected(&node_id);
 		}

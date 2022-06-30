@@ -444,7 +444,7 @@ where C::Target: chain::Filter,
 		let monitor_states = self.monitors.read().unwrap();
 		for (_, monitor_state) in monitor_states.iter().filter(|(funding_outpoint, _)| {
 			for chan in ignored_channels {
-				if chan.funding_txo.as_ref() == Some(funding_outpoint) {
+				if chan.funding_txo.as_ref() == Some(funding_outpoint) || chan.original_funding_outpoint.as_ref() == Some(funding_outpoint) {
 					return false;
 				}
 			}
@@ -624,6 +624,15 @@ where C::Target: chain::Filter,
 			)
 		}
 	}
+
+	/// Retrieves the latest holder commitment transaction (and possibly HTLC transactions) for
+	/// the channel identified with the given `funding_txo`. Errors if no monitor is registered
+	/// for the given `funding_txo`.
+	pub fn get_latest_holder_commitment_txn(&self, funding_txo: &OutPoint) -> Result<Vec<bitcoin::Transaction>, ()> {
+		let monitors = self.monitors.read().unwrap();
+		let monitor = monitors.get(funding_txo).ok_or(())?;
+		Ok(monitor.monitor.get_latest_holder_commitment_txn_internal(&self.logger))
+	}
 }
 
 impl<ChannelSigner: WriteableEcdsaChannelSigner, C: Deref, T: Deref, F: Deref, L: Deref, P: Deref>
@@ -748,6 +757,33 @@ where C::Target: chain::Filter,
 		Ok(persist_res)
 	}
 
+	fn update_channel_funding_txo(&self, old_funding_txo: OutPoint, new_funding_txo: OutPoint, channel_value_satoshis: u64) -> ChannelMonitorUpdateStatus {
+		let mut monitors = self.monitors.write().unwrap();
+		let monitor_opt = monitors.get_mut(&old_funding_txo);
+		match monitor_opt {
+			None => {
+				log_error!(self.logger, "Failed to update channel monitor funding txo: no such monitor registered");
+
+				// We should never ever trigger this from within ChannelManager. Technically a
+				// user could use this object with some proxying in between which makes this
+				// possible, but in tests and fuzzing, this should be a panic.
+				#[cfg(any(test, fuzzing))]
+				panic!("ChannelManager generated a channel update for a channel that was not yet registered!");
+				#[cfg(not(any(test, fuzzing)))]
+				return ChannelMonitorUpdateStatus::UnrecoverableError;
+			},
+			Some(monitor_state) => {
+				let spk = monitor_state.monitor.update_funding_info(new_funding_txo, channel_value_satoshis);
+				if let Some(filter) = &self.chain_source {
+					filter.register_output(WatchedOutput { block_hash: None, outpoint: new_funding_txo, script_pubkey: spk });
+				}
+				return ChannelMonitorUpdateStatus::Completed;
+			}
+		}
+	}
+
+	/// Note that we persist the given `ChannelMonitor` update while holding the
+	/// `ChainMonitor` monitors lock.
 	fn update_channel(&self, funding_txo: OutPoint, update: &ChannelMonitorUpdate) -> ChannelMonitorUpdateStatus {
 		// Update the monitor that watches the channel referred to by the given outpoint.
 		let monitors = self.monitors.read().unwrap();
@@ -827,7 +863,7 @@ where C::Target: chain::Filter,
 				}
 				let monitor_events = monitor_state.monitor.get_and_clear_pending_monitor_events();
 				if monitor_events.len() > 0 {
-					let monitor_outpoint = monitor_state.monitor.get_funding_txo().0;
+					let monitor_outpoint = monitor_state.monitor.get_original_funding_txo().0;
 					let counterparty_node_id = monitor_state.monitor.get_counterparty_node_id();
 					pending_monitor_events.push((monitor_outpoint, monitor_events, counterparty_node_id));
 				}

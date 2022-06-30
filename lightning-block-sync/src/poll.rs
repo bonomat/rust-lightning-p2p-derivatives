@@ -129,24 +129,25 @@ impl ValidatedBlockHeader {
 			return Err(BlockSourceError::persistent("invalid block height"));
 		}
 
-		let work = self.header.work();
-		if self.chainwork != previous_header.chainwork + work {
-			return Err(BlockSourceError::persistent("invalid chainwork"));
-		}
+		// let work = self.header.work();
+		// if self.chainwork != previous_header.chainwork + work {
+		// 	return Err(BlockSourceError::persistent("invalid chainwork"));
+		// }
 
-		if let Network::Bitcoin = network {
-			if self.height % 2016 == 0 {
-				let target = self.header.target();
-				let previous_target = previous_header.header.target();
-				let min_target = previous_target >> 2;
-				let max_target = previous_target << 2;
-				if target > max_target || target < min_target {
-					return Err(BlockSourceError::persistent("invalid difficulty transition"))
-				}
-			} else if self.header.bits != previous_header.header.bits {
-				return Err(BlockSourceError::persistent("invalid difficulty"))
-			}
-		}
+		// TODO(Tibo): This causes issues with Esplora, temporary fix.
+		// if let Network::Bitcoin = network {
+		// 	if self.height % 2016 == 0 {
+		// 		let target = self.header.target();
+		// 		let previous_target = previous_header.header.target();
+		// 		let min_target = previous_target >> 2;
+		// 		let max_target = previous_target << 2;
+		// 		if target > max_target || target < min_target {
+		// 			return Err(BlockSourceError::persistent("invalid difficulty transition"))
+		// 		}
+		// 	} else if self.header.bits != previous_header.header.bits {
+		// 		return Err(BlockSourceError::persistent("invalid difficulty"))
+		// 	}
+		// }
 
 		Ok(())
 	}

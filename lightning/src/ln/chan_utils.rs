@@ -875,11 +875,22 @@ pub struct ChannelTransactionParameters {
 	/// The late-bound counterparty channel transaction parameters.
 	/// These parameters are populated at the point in the protocol where the counterparty provides them.
 	pub counterparty_parameters: Option<CounterpartyChannelTransactionParameters>,
-	/// The late-bound funding outpoint
+	/// The late-bound funding outpoint.
+	///
+	/// If it's a vanilla LN channel, this value corresponds to the actual funding outpoint that
+	/// goes on-chain when the channel is created.
+	///
+	/// If instead we're dealing with a split channel, this value corresponds to the output of a
+	/// glue transaction which sits in between the funding transaction and the commitment
+	/// transaction.
 	pub funding_outpoint: Option<chain::transaction::OutPoint>,
 	/// This channel's type, as negotiated during channel open. For old objects where this field
 	/// wasn't serialized, it will default to static_remote_key at deserialization.
-	pub channel_type_features: ChannelTypeFeatures
+	pub channel_type_features: ChannelTypeFeatures,
+	/// This value always corresponds to the actual funding outpoint. This is different to
+	/// [`ChannelTransactionParameters::funding_outpoint`], which varies depending on the type
+	/// of Lightning channel we have.
+	pub original_funding_outpoint: Option<chain::transaction::OutPoint>,
 }
 
 /// Late-bound per-channel counterparty data used to build transactions.
@@ -938,6 +949,7 @@ impl Writeable for ChannelTransactionParameters {
 			(8, self.funding_outpoint, option),
 			(10, legacy_deserialization_prevention_marker, option),
 			(11, self.channel_type_features, required),
+			(12, self.original_funding_outpoint, option),
 		});
 		Ok(())
 	}
@@ -952,6 +964,7 @@ impl Readable for ChannelTransactionParameters {
 		let mut funding_outpoint = None;
 		let mut _legacy_deserialization_prevention_marker: Option<()> = None;
 		let mut channel_type_features = None;
+		let mut original_funding_outpoint = None;
 
 		read_tlv_fields!(reader, {
 			(0, holder_pubkeys, required),
@@ -961,6 +974,7 @@ impl Readable for ChannelTransactionParameters {
 			(8, funding_outpoint, option),
 			(10, _legacy_deserialization_prevention_marker, option),
 			(11, channel_type_features, option),
+			(12, original_funding_outpoint, option),
 		});
 
 		let mut additional_features = ChannelTypeFeatures::empty();
@@ -973,7 +987,8 @@ impl Readable for ChannelTransactionParameters {
 			is_outbound_from_holder: is_outbound_from_holder.0.unwrap(),
 			counterparty_parameters,
 			funding_outpoint,
-			channel_type_features: channel_type_features.unwrap_or(ChannelTypeFeatures::only_static_remote_key())
+			channel_type_features: channel_type_features.unwrap_or(ChannelTypeFeatures::only_static_remote_key()),
+			original_funding_outpoint,
 		})
 	}
 }
@@ -1099,6 +1114,7 @@ impl HolderCommitmentTransaction {
 			counterparty_parameters: Some(CounterpartyChannelTransactionParameters { pubkeys: channel_pubkeys.clone(), selected_contest_delay: 0 }),
 			funding_outpoint: Some(chain::transaction::OutPoint { txid: Txid::all_zeros(), index: 0 }),
 			channel_type_features: ChannelTypeFeatures::only_static_remote_key(),
+			original_funding_outpoint: None,
 		};
 		let mut counterparty_htlc_sigs = Vec::new();
 		for _ in 0..htlcs.len() {
@@ -1879,15 +1895,15 @@ mod tests {
 			let holder_pubkeys = signer.pubkeys();
 			let counterparty_pubkeys = counterparty_signer.pubkeys().clone();
 			let keys = TxCreationKeys::derive_new(&secp_ctx, &per_commitment_point, delayed_payment_base, htlc_basepoint, &counterparty_pubkeys.revocation_basepoint, &counterparty_pubkeys.htlc_basepoint);
-			let channel_parameters = ChannelTransactionParameters {
-				holder_pubkeys: holder_pubkeys.clone(),
-				holder_selected_contest_delay: 0,
-				is_outbound_from_holder: false,
-				counterparty_parameters: Some(CounterpartyChannelTransactionParameters { pubkeys: counterparty_pubkeys.clone(), selected_contest_delay: 0 }),
-				funding_outpoint: Some(chain::transaction::OutPoint { txid: Txid::all_zeros(), index: 0 }),
-				channel_type_features: ChannelTypeFeatures::only_static_remote_key(),
-			};
-			let htlcs_with_aux = Vec::new();
+			let  channel_parameters = ChannelTransactionParameters {
+			holder_pubkeys: holder_pubkeys.clone(),
+			holder_selected_contest_delay: 0,
+			is_outbound_from_holder: false,
+			counterparty_parameters: Some(CounterpartyChannelTransactionParameters { pubkeys: counterparty_pubkeys.clone(), selected_contest_delay: 0 }),
+			funding_outpoint: Some(chain::transaction::OutPoint { txid: Txid::all_zeros(), index: 0 }),
+			channel_type_features: ChannelTypeFeatures::only_static_remote_key(),
+			original_funding_outpoint: None,
+		};let htlcs_with_aux = Vec::new();
 
 			Self {
 				commitment_number: 0,

@@ -126,6 +126,10 @@ impl ChannelSigner for TestChannelSigner {
 	fn provide_channel_parameters(&mut self, channel_parameters: &ChannelTransactionParameters) {
 		self.inner.provide_channel_parameters(channel_parameters)
 	}
+
+	fn set_channel_value_satoshis(&mut self, value: u64) {
+        self.inner.set_channel_value_satoshis(value)
+    }
 }
 
 impl EcdsaChannelSigner for TestChannelSigner {

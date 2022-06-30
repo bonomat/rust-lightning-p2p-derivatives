@@ -454,6 +454,9 @@ pub trait ChannelSigner {
 	///
 	/// channel_parameters.is_populated() MUST be true.
 	fn provide_channel_parameters(&mut self, channel_parameters: &ChannelTransactionParameters);
+
+	/// Set the channel value in satoshis, used for when the channel gets split.
+	fn set_channel_value_satoshis(&mut self, value: u64);
 }
 
 /// A trait to sign Lightning channel transactions as described in
@@ -1081,6 +1084,10 @@ impl ChannelSigner for InMemorySigner {
 		}
 		assert!(channel_parameters.is_populated(), "Channel parameters must be fully populated");
 		self.channel_parameters = Some(channel_parameters.clone());
+	}
+
+	fn set_channel_value_satoshis(&mut self, value: u64) {
+		self.channel_value_satoshis = value;
 	}
 }
 

@@ -2881,6 +2881,11 @@ mod tests {
 			config: None,
 			feerate_sat_per_1000_weight: None,
 			channel_shutdown_state: Some(channelmanager::ChannelShutdownState::NotShuttingDown),
+			funding_redeemscript: None,
+			holder_funding_pubkey: node_id,
+			counter_funding_pubkey: None,
+			original_funding_outpoint: None,
+			channel_keys_id: [0; 32],
 		}
 	}
 
@@ -7794,6 +7799,11 @@ pub(crate) mod bench_utils {
 			config: None,
 			feerate_sat_per_1000_weight: None,
 			channel_shutdown_state: Some(channelmanager::ChannelShutdownState::NotShuttingDown),
+			funding_redeemscript: None,
+			holder_funding_pubkey: payer_pubkey(),
+			counter_funding_pubkey: None,
+			original_funding_outpoint: None,
+			channel_keys_id: [0u8; 32],
 		}
 	}
 

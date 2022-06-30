@@ -58,7 +58,7 @@ impl<'a, T> core::fmt::Display for DebugFundingInfo<'a, T> {
 }
 macro_rules! log_funding_info {
 	($key_storage: expr) => {
-		$crate::util::macro_logger::DebugFundingInfo(&$key_storage.get_funding_txo())
+		$crate::util::macro_logger::DebugFundingInfo(&$key_storage.get_original_funding_txo())
 	}
 }
 

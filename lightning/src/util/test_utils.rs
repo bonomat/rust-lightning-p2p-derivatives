@@ -284,6 +284,10 @@ impl<'a> chain::Watch<TestChannelSigner> for TestChainMonitor<'a> {
 	fn release_pending_monitor_events(&self) -> Vec<(OutPoint, Vec<MonitorEvent>, Option<PublicKey>)> {
 		return self.chain_monitor.release_pending_monitor_events();
 	}
+
+	fn update_channel_funding_txo(&self, _: OutPoint, _: OutPoint, _: u64) -> chain::ChannelMonitorUpdateStatus {
+		todo!()
+	}
 }
 
 struct JusticeTxData {

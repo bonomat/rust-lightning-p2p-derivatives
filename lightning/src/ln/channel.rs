@@ -713,7 +713,7 @@ pub(super) struct ChannelContext<SP: Deref> where SP::Target: SignerProvider {
 
 	latest_monitor_update_id: u64,
 
-	holder_signer: ChannelSignerType<<SP::Target as SignerProvider>::Signer>,
+	pub(crate) holder_signer: ChannelSignerType<<SP::Target as SignerProvider>::Signer>,
 	shutdown_scriptpubkey: Option<ShutdownScript>,
 	destination_script: Script,
 
@@ -933,7 +933,7 @@ pub(super) struct ChannelContext<SP: Deref> where SP::Target: SignerProvider {
 
 	/// The unique identifier used to re-derive the private key material for the channel through
 	/// [`SignerProvider::derive_channel_signer`].
-	channel_keys_id: [u8; 32],
+	pub(crate) channel_keys_id: [u8; 32],
 
 	/// If we can't release a [`ChannelMonitorUpdate`] until some external action completes, we
 	/// store it here and only release it to the `ChannelManager` once it asks for it.
@@ -1069,6 +1069,34 @@ impl<SP: Deref> ChannelContext<SP> where SP::Target: SignerProvider  {
 	pub fn get_funding_txo(&self) -> Option<OutPoint> {
 		self.channel_transaction_parameters.funding_outpoint
 	}
+
+	/// Returns the funding txo which is always the one that was confirmed on chain, even if the
+	/// channel is split.
+	pub fn get_original_funding_txo(&self) -> Option<OutPoint> {
+		if self.channel_transaction_parameters.original_funding_outpoint.is_none() {
+			self.get_funding_txo()
+		} else {
+			self.channel_transaction_parameters.original_funding_outpoint
+		}
+	}
+
+	/// Set the funding output and value of the channel, returning a `ChannelMonitorUpdate`
+	/// containing a commitment for the new funding output if requested.
+	fn set_funding_outpoint(&mut self, funding_outpoint: &OutPoint, channel_value_satoshis: u64, own_balance: u64)
+	{
+		self.channel_value_satoshis = channel_value_satoshis;
+		self.holder_signer.as_mut().set_channel_value_satoshis(channel_value_satoshis);
+		self.value_to_self_msat = own_balance + self.pending_outbound_htlcs.iter().map(|x| x.amount_msat).sum::<u64>();
+
+		let original_funding_outpoint = self.channel_transaction_parameters.original_funding_outpoint.unwrap_or_else(|| self.channel_transaction_parameters.funding_outpoint.unwrap());
+		self.channel_transaction_parameters.funding_outpoint = Some(funding_outpoint.clone());
+		self.channel_transaction_parameters.original_funding_outpoint = if &original_funding_outpoint != funding_outpoint {
+			Some(original_funding_outpoint.clone())
+		} else {
+			None
+		};
+	}
+
 
 	/// Returns the block hash in which our funding transaction was confirmed.
 	pub fn get_funding_tx_confirmed_in(&self) -> Option<BlockHash> {
@@ -2043,7 +2071,7 @@ impl<SP: Deref> ChannelContext<SP> where SP::Target: SignerProvider  {
 				_ => {}
 			}
 		}
-		let monitor_update = if let Some(funding_txo) = self.get_funding_txo() {
+		let monitor_update = if let Some(funding_txo) = self.get_original_funding_txo() {
 			// If we haven't yet exchanged funding signatures (ie channel_state < FundingSent),
 			// returning a channel monitor update here would imply a channel monitor update before
 			// we even registered the channel monitor to begin with, which is invalid.
@@ -3880,7 +3908,7 @@ impl<SP: Deref> Channel<SP> where
 		Ok(())
 	}
 
-	fn get_last_revoke_and_ack(&self) -> msgs::RevokeAndACK {
+	pub(super) fn get_last_revoke_and_ack(&self) -> msgs::RevokeAndACK {
 		let next_per_commitment_point = self.context.holder_signer.as_ref().get_per_commitment_point(self.context.cur_holder_commitment_transaction_number, &self.context.secp_ctx);
 		let per_commitment_secret = self.context.holder_signer.as_ref().release_commitment_secret(self.context.cur_holder_commitment_transaction_number + 2);
 		msgs::RevokeAndACK {
@@ -4878,8 +4906,54 @@ impl<SP: Deref> Channel<SP> where
 						msgs = (Some(channel_ready), announcement_sigs);
 					}
 				}
+
+				// If we have a vanilla LN channel, this checks if the transaction
+				// spends from the actual funding output. That could be either a
+				// commitment transaction or a mutual close transaction.
+				//
+				// If we have a split channel, this checks if the transaction spends
+				// from the glue output. That could only be a commitment
+				// transaction.
+				let is_funding_or_glue_txo = |prev_outpoint: &bitcoin::OutPoint| -> bool {
+					prev_outpoint == &funding_txo.into_bitcoin_outpoint()
+				};
+
+				// This check only runs if the check above returns `false`. We know
+				// that a vanilla LN channel can only be closed by spending from the
+				// original funding output, so in this check we are only considering
+				// split channels.
+				//
+				// The other ways in which a split channel could be closed are:
+				//
+				// - Through a mutual close of the _LN_ channel, which would spend
+				// directly from the original funding output.
+				//
+				// - Through the publication of a revoked commitment transaction
+				// spending from the original funding output!
+				//
+				// And that's exactly what we check here: whether the transaction
+				// spends from the original funding output and, if it does, whether
+				// the transaction is NOT the split transaction (the only other
+				// possible option).
+				//
+				// We do not announce the closing of the LN channel with the split
+				// transaction, because that is reserved to either mutual close or
+				// commitment transactions. LDK will only react to this announcement
+				// once, so we should not waste it on the split transaction, as this
+				// can lead to loss of funds.
+				let is_final_tx_spending_from_original_funding_txo = |prev_outpoint: &bitcoin::OutPoint, outputs: &[bitcoin::TxOut]| -> bool {
+					match self.context.get_original_funding_txo().map(|x| x.into_bitcoin_outpoint()) {
+						Some(original_funding_outpoint) => {
+						        // Transaction spends from actual funding output.
+						        prev_outpoint == &original_funding_outpoint &&
+							// Transaction is _not_ a split transaction.
+						        !(outputs.len() == 2 && outputs[0].script_pubkey == outputs[1].script_pubkey)
+					        }
+						None => false,
+					}
+				};
 				for inp in tx.input.iter() {
-					if inp.previous_output == funding_txo.into_bitcoin_outpoint() {
+					if is_funding_or_glue_txo(&inp.previous_output) || is_final_tx_spending_from_original_funding_txo(&inp.previous_output, &tx.output) {
 						log_info!(logger, "Detected channel-closing tx {} spending {}:{}, closing channel {}", tx.txid(), inp.previous_output.txid, inp.previous_output.vout, &self.context.channel_id());
 						return Err(ClosureReason::CommitmentTxConfirmed);
 					}
@@ -5251,6 +5325,7 @@ impl<SP: Deref> Channel<SP> where
 			// construction but have not received `tx_signatures` we MUST set `next_funding_txid` to the
 			// txid of that interactive transaction, else we MUST NOT set it.
 			next_funding_txid: None,
+			sub_channel_state: None,
 		}
 	}
 
@@ -5499,9 +5574,9 @@ impl<SP: Deref> Channel<SP> where
 					signature = res.0;
 					htlc_signatures = res.1;
 
-					log_trace!(logger, "Signed remote commitment tx {} (txid {}) with redeemscript {} -> {} in channel {}",
+					log_trace!(logger, "Signed remote commitment tx {} (txid {}) with redeemscript {} with value {} -> {} in channel {}",
 						encode::serialize_hex(&commitment_stats.tx.trust().built_transaction().transaction),
-						&counterparty_commitment_txid, encode::serialize_hex(&self.context.get_funding_redeemscript()),
+						&counterparty_commitment_txid, encode::serialize_hex(&self.context.get_funding_redeemscript()), self.context.channel_value_satoshis,
 						log_bytes!(signature.serialize_compact()[..]), &self.context.channel_id());
 
 					for (ref htlc_sig, ref htlc) in htlc_signatures.iter().zip(htlcs) {
@@ -5665,6 +5740,21 @@ impl<SP: Deref> Channel<SP> where
 				}
 			})
 			.chain(self.context.pending_outbound_htlcs.iter().map(|htlc| (&htlc.source, &htlc.payment_hash)))
+	}
+
+	/// Set the funding output and value of the channel, returning a `ChannelMonitorUpdate`
+	/// containing a commitment for the new funding output if requested.
+	pub fn set_funding_outpoint<L: Deref>(&mut self, funding_outpoint: &OutPoint, channel_value_satoshis: u64, own_balance: u64, need_commitment: bool, logger: &L) -> Option<ChannelMonitorUpdate>
+		where
+		L::Target: Logger
+	{
+		self.context.set_funding_outpoint(funding_outpoint, channel_value_satoshis, own_balance);
+
+		if need_commitment {
+			let monitor_update = self.build_commitment_no_status_check(logger);
+			self.monitor_updating_paused(false, true, false, Vec::new(), Vec::new(), Vec::new());
+			self.push_ret_blockable_mon_update(monitor_update)
+		} else { None }
 	}
 }
 
@@ -5832,7 +5922,8 @@ impl<SP: Deref> OutboundV1Channel<SP> where SP::Target: SignerProvider {
 					is_outbound_from_holder: true,
 					counterparty_parameters: None,
 					funding_outpoint: None,
-					channel_type_features: channel_type.clone()
+					channel_type_features: channel_type.clone(),
+					original_funding_outpoint: None,
 				},
 				funding_transaction: None,
 				is_batch_funding: None,
@@ -6485,7 +6576,8 @@ impl<SP: Deref> InboundV1Channel<SP> where SP::Target: SignerProvider {
 						pubkeys: counterparty_pubkeys,
 					}),
 					funding_outpoint: None,
-					channel_type_features: channel_type.clone()
+					channel_type_features: channel_type.clone(),
+					original_funding_outpoint: None,
 				},
 				funding_transaction: None,
 				is_batch_funding: None,

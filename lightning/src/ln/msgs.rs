@@ -737,6 +737,8 @@ pub struct ChannelReestablish {
 	pub my_current_per_commitment_point: PublicKey,
 	/// The next funding transaction ID
 	pub next_funding_txid: Option<Txid>,
+	///
+	pub sub_channel_state: Option<u8>,
 }
 
 /// An [`announcement_signatures`] message to be sent to or received from a peer.
@@ -1814,6 +1816,7 @@ impl_writeable_msg!(ChannelReestablish, {
 	my_current_per_commitment_point,
 }, {
 	(0, next_funding_txid, option),
+	(1, sub_channel_state, option),
 });
 
 impl_writeable_msg!(ClosingSigned,
@@ -2693,6 +2696,7 @@ mod tests {
 			your_last_per_commitment_secret: [9;32],
 			my_current_per_commitment_point: public_key,
 			next_funding_txid: None,
+			sub_channel_state: None,
 		};
 
 		let encoded_value = cr.encode();
@@ -2724,6 +2728,7 @@ mod tests {
 			next_funding_txid: Some(Txid::from_hash(bitcoin::hashes::Hash::from_slice(&[
 				48, 167, 250, 69, 152, 48, 103, 172, 164, 99, 59, 19, 23, 11, 92, 84, 15, 80, 4, 12, 98, 82, 75, 31, 201, 11, 91, 23, 98, 23, 53, 124,
 			]).unwrap())),
+			sub_channel_state: None,
 		};
 
 		let encoded_value = cr.encode();
