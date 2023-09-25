@@ -82,6 +82,8 @@ pub use crate::ln::outbound_payment::{PaymentSendFailure, ProbeSendFailure, Retr
 use crate::ln::script::ShutdownScript;
 use super::msgs::{CommitmentSigned, RevokeAndACK};
 
+pub type NumberedCommitmentSigned = (CommitmentSigned, u64);
+
 // We hold various information about HTLC relay in the HTLC objects in Channel itself:
 //
 // Upon receipt of an HTLC from a peer, we'll give it a PendingHTLCStatus indicating if it should
@@ -2590,12 +2592,14 @@ where
 		}, None));
 	}
 
-	/// Executes the given callback prividing it with a [`ChannelLock`], ensuring that no other
+	/// Executes the given callback providing it with a [`ChannelLock`], ensuring that no other
 	/// operation will be executed on the referenced channel at the same time. Errors if the
 	/// channel peer is disconnected or the channel is not in a useable state. If the callback
 	/// returns an error, the channel value and funding outpoint are reset to the values they had
-	/// prior to the callback call.
-	pub fn with_useable_channel_lock<C, RV>(&self, channel_id: &[u8; 32], counter_party_node_id: &PublicKey, callback: C) -> Result<RV, APIError>
+	/// prior to the callback call. If `commit_tx_number` is `Some`, it will be checked against the
+	/// next commitment number for the requested channel, and will return an error if the two
+	/// values differ.
+	pub fn with_useable_channel_lock<C, RV>(&self, channel_id: &[u8; 32], counter_party_node_id: &PublicKey, commit_tx_number: Option<u64>, callback: C) -> Result<RV, APIError>
 		where
 		C: FnOnce(&mut ChannelLock<SP>) -> Result<RV, APIError>
 	{
@@ -2614,6 +2618,12 @@ where
 			let chan = chan_entry.get_mut();
 			if !chan.context().is_usable() {
 				return Err(APIError::ChannelUnavailable { err: "Channel is not useable.".to_string() });
+			}
+
+			if let Some(commit_tx_number) = commit_tx_number {
+				if commit_tx_number != chan.get_cur_holder_commitment_transaction_number() - 1 {
+					return Err(APIError::ExternalError { err: format!("Invalid commitment transaction number, expected {} but got {}", chan.get_cur_holder_commitment_transaction_number(), commit_tx_number) });
+				}
 			}
 
 			let channel_value = chan.context().get_value_satoshis();
@@ -2672,7 +2682,7 @@ where
 		}
 	}
 
-	fn get_updated_funding_outpoint_commitment_signed_internal(&self, channel_lock: &mut ChannelLock<SP>, funding_outpoint: &OutPoint, channel_value_satoshis: u64, own_balance: u64) -> Result<CommitmentSigned, APIError> {
+	fn get_updated_funding_outpoint_commitment_signed_internal(&self, channel_lock: &mut ChannelLock<SP>, funding_outpoint: &OutPoint, channel_value_satoshis: u64, own_balance: u64) -> Result<(CommitmentSigned, u64), APIError> {
 		if own_balance > channel_value_satoshis * 1000 {
 			return Err(APIError::APIMisuseError { err: "value_to_self must be smaller than channel_value".to_string() });
 		}
@@ -2694,8 +2704,9 @@ where
 
 		let res = chan.monitor_updating_restored(&self.logger, &self.node_signer, self.genesis_hash, &self.default_configuration, self.best_block.read().unwrap().height());
 
+		let commit_tx_number = chan.get_cur_counterparty_commitment_transaction_number();
 
-		return Ok(res.commitment_update.unwrap().commitment_signed)
+		return Ok((res.commitment_update.unwrap().commitment_signed, commit_tx_number))
 	}
 
 	fn on_commitment_signed_get_raa_internal(&self, channel_lock: &mut ChannelLock<SP>, commitment_signature: &secp256k1::ecdsa::Signature, htlc_signatures: &[secp256k1::ecdsa::Signature]) -> Result<msgs::RevokeAndACK, APIError> {
@@ -2888,22 +2899,24 @@ where
 		self.close_channel_internal(channel_id, counterparty_node_id, target_feerate_sats_per_1000_weight, shutdown_script)
 	}
 
-    ///
-    pub fn get_updated_funding_outpoint_commitment_signed(&self, channel_lock: &mut ChannelLock<SP>, funding_outpoint: &OutPoint, channel_value_satoshis: u64, value_to_self_msat: u64) -> Result<CommitmentSigned, APIError> {
+    /// Updates the funding output and returns the `CommitmentSigned` message for the updated
+	/// commitment transaction, as well as the commitment transaction number.
+    pub fn get_updated_funding_outpoint_commitment_signed(&self, channel_lock: &mut ChannelLock<SP>, funding_outpoint: &OutPoint, channel_value_satoshis: u64, value_to_self_msat: u64) -> Result<NumberedCommitmentSigned, APIError> {
         self.get_updated_funding_outpoint_commitment_signed_internal(channel_lock, funding_outpoint, channel_value_satoshis, value_to_self_msat)
     }
 
-    ///
+    /// Process and validates the given commitment signature and returns the RAA to be given to the
+	/// counterparty on success.
     pub fn on_commitment_signed_get_raa(&self, channel_lock: &mut ChannelLock<SP>, commitment_signature: &secp256k1::ecdsa::Signature, htlc_signatures: &[secp256k1::ecdsa::Signature]) -> Result<RevokeAndACK, APIError> {
         self.on_commitment_signed_get_raa_internal(channel_lock, commitment_signature, htlc_signatures)
     }
 
-    ///
+    /// Process the given RAA message.
     pub fn revoke_and_ack_commitment(&self, channel_lock: &mut ChannelLock<SP>, revoke_and_ack: &RevokeAndACK) -> Result<(), APIError> {
         self.revoke_and_ack_commitment_internal(channel_lock, revoke_and_ack)
     }
 
-    ///
+    /// Set the funding outpoint for the channel to the given values.
     pub fn set_funding_outpoint(&self, channel_lock: &mut ChannelLock<SP>, funding_output: &OutPoint, channel_value_satoshis: u64, value_to_self_msat: u64) {
         self.set_funding_outpoint_internal(channel_lock, funding_output, channel_value_satoshis, value_to_self_msat);
     }
