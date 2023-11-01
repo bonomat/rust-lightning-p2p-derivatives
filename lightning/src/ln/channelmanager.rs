@@ -82,6 +82,8 @@ pub use crate::ln::outbound_payment::{PaymentSendFailure, ProbeSendFailure, Retr
 use crate::ln::script::ShutdownScript;
 use super::msgs::{CommitmentSigned, RevokeAndACK};
 
+/// A tuple containing a [`CommitmentSigned`] message and the commitment transaction number it
+/// corresponds to.
 pub type NumberedCommitmentSigned = (CommitmentSigned, u64);
 
 // We hold various information about HTLC relay in the HTLC objects in Channel itself:
