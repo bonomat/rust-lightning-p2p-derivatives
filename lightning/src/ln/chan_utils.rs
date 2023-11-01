@@ -949,7 +949,7 @@ impl Writeable for ChannelTransactionParameters {
 			(8, self.funding_outpoint, option),
 			(10, legacy_deserialization_prevention_marker, option),
 			(11, self.channel_type_features, required),
-			(12, self.original_funding_outpoint, option),
+			(14, self.original_funding_outpoint, option),
 		});
 		Ok(())
 	}
@@ -974,7 +974,7 @@ impl Readable for ChannelTransactionParameters {
 			(8, funding_outpoint, option),
 			(10, _legacy_deserialization_prevention_marker, option),
 			(11, channel_type_features, option),
-			(12, original_funding_outpoint, option),
+			(14, original_funding_outpoint, option),
 		});
 
 		let mut additional_features = ChannelTypeFeatures::empty();
