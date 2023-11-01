@@ -2622,12 +2622,6 @@ where
 				return Err(APIError::ChannelUnavailable { err: "Channel is not useable.".to_string() });
 			}
 
-			if let Some(commit_tx_number) = commit_tx_number {
-				if commit_tx_number != chan.get_cur_holder_commitment_transaction_number() - 1 {
-					return Err(APIError::ExternalError { err: format!("Invalid commitment transaction number, expected {} but got {}", chan.get_cur_holder_commitment_transaction_number(), commit_tx_number) });
-				}
-			}
-
 			let channel_value = chan.context().get_value_satoshis();
 			let own_balance = chan.context().get_available_balances(&self.fee_estimator).balance_msat;
 			let funding_outpoint = chan.context().channel_transaction_parameters.funding_outpoint.unwrap();
@@ -2637,6 +2631,12 @@ where
 				ChannelPhase::UnfundedInboundV1(_) => Err(APIError::ChannelUnavailable { err: "Channel not funded".to_string() }),
 				ChannelPhase::Funded(channel) => Ok(channel)
 			}?;
+
+			if let Some(commit_tx_number) = commit_tx_number {
+				if commit_tx_number != channel.get_cur_holder_commitment_transaction_number() - 1 {
+					return Err(APIError::ExternalError { err: format!("Invalid commitment transaction number, expected {} but got {}", channel.get_cur_holder_commitment_transaction_number(), commit_tx_number) });
+				}
+			}
 
 			let mut lock = ChannelLock { channel };
 
@@ -9812,7 +9812,7 @@ where
 				if let ChannelPhase::Funded(chan) = phase {
 					// Channels that were persisted have to be funded, otherwise they should have been
 					// discarded.
-					let funding_txo = chan.context.get_funding_txo().ok_or(DecodeError::InvalidValue)?;
+					let funding_txo = chan.context.get_original_funding_txo().ok_or(DecodeError::InvalidValue)?;
 					let monitor = args.channel_monitors.get(&funding_txo)
 						.expect("We already checked for monitor presence when loading channels");
 					let mut max_in_flight_update_id = monitor.get_latest_update_id();
