@@ -1073,11 +1073,7 @@ impl<SP: Deref> ChannelContext<SP> where SP::Target: SignerProvider  {
 	/// Returns the funding txo which is always the one that was confirmed on chain, even if the
 	/// channel is split.
 	pub fn get_original_funding_txo(&self) -> Option<OutPoint> {
-		if self.channel_transaction_parameters.original_funding_outpoint.is_none() {
-			self.get_funding_txo()
-		} else {
-			self.channel_transaction_parameters.original_funding_outpoint
-		}
+		self.channel_transaction_parameters.original_funding_outpoint.or(self.get_funding_txo())
 	}
 
 	/// Set the funding output and value of the channel, returning a `ChannelMonitorUpdate`
