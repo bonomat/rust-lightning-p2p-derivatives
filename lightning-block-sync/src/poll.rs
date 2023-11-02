@@ -120,7 +120,7 @@ impl std::ops::Deref for ValidatedBlockHeader {
 impl ValidatedBlockHeader {
 	/// Checks that the header correctly builds on previous_header: the claimed work differential
 	/// matches the actual PoW and the difficulty transition is possible, i.e., within 4x.
-	fn check_builds_on(&self, previous_header: &ValidatedBlockHeader, network: Network) -> BlockSourceResult<()> {
+	fn check_builds_on(&self, previous_header: &ValidatedBlockHeader, _network: Network) -> BlockSourceResult<()> {
 		if self.header.prev_blockhash != previous_header.block_hash {
 			return Err(BlockSourceError::persistent("invalid previous block hash"));
 		}
