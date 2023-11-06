@@ -143,7 +143,7 @@ jobs:
           rustup override set ${{ env.TOOLCHAIN }}
       - name: Fetch full tree and rebase on upstream
         run: |
-          git remote add upstream https://github.com/lightningdevkit/rust-lightning
+          git remote add upstream https://github.com/p2pderivatives/rust-lightning
           git fetch upstream
           export GIT_COMMITTER_EMAIL="rl-ci@example.com"
           export GIT_COMMITTER_NAME="RL CI"
