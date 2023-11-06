@@ -130,11 +130,14 @@ else
 	[ "$RUSTC_MINOR_VERSION" -lt 60 ] && cargo update -p memchr --precise "2.5.0" --verbose
 	cargo check --verbose --color always
 fi
+[ "$CI_MINIMIZE_DISK_USAGE" != "" ] && cargo clean
 popd
 
 # Test that we can build downstream code with only the "release pins".
 pushd msrv-no-dev-deps-check
 PIN_RELEASE_DEPS
+# The memchr crate switched to an MSRV of 1.60 starting with v2.6.0
+[ "$RUSTC_MINOR_VERSION" -lt 60 ] && cargo update -p memchr --precise "2.5.0" --verbose
 cargo check
 popd
 
