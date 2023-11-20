@@ -1991,6 +1991,12 @@ macro_rules! try_chan_phase_entry {
 macro_rules! remove_channel_phase {
 	($self: expr, $entry: expr) => {
 		{
+			let context = &$entry.get().context();
+			let balance = context.get_available_balances(&$self.fee_estimator);
+
+			log_debug!($self.logger, "Channel balance for {} before closure balance_msat={}, inbound_capacity_msat={}, outbound_capacity_msat={}",
+				   log_bytes!(context.channel_id().0[..]), balance.balance_msat, balance.inbound_capacity_msat, balance.outbound_capacity_msat);
+
 			let channel = $entry.remove_entry().1;
 			update_maps_on_chan_removal!($self, &channel.context());
 			channel
