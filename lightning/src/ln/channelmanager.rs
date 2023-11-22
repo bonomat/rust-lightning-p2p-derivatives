@@ -2608,7 +2608,7 @@ where
 	/// prior to the callback call. If `commit_tx_number` is `Some`, it will be checked against the
 	/// next commitment number for the requested channel, and will return an error if the two
 	/// values differ.
-	pub fn with_useable_channel_lock<C, RV>(&self, channel_id: &[u8; 32], counter_party_node_id: &PublicKey, commit_tx_number: Option<u64>, callback: C) -> Result<RV, APIError>
+	pub fn with_useable_channel_lock<C, RV>(&self, channel_id: &ChannelId, counter_party_node_id: &PublicKey, commit_tx_number: Option<u64>, callback: C) -> Result<RV, APIError>
 		where
 		C: FnOnce(&mut ChannelLock<SP>) -> Result<RV, APIError>
 	{
@@ -2623,7 +2623,7 @@ where
 		if !peer_state.is_connected {
 			return Err(APIError::ChannelUnavailable { err: "Peer is not connected".to_string() });
 		}
-		if let hash_map::Entry::Occupied(mut chan_entry) = peer_state.channel_by_id.entry(ChannelId(channel_id.clone())) {
+		if let hash_map::Entry::Occupied(mut chan_entry) = peer_state.channel_by_id.entry(*channel_id) {
 			let chan = chan_entry.get_mut();
 			if !chan.context().is_usable() {
 				return Err(APIError::ChannelUnavailable { err: "Channel is not useable.".to_string() });
@@ -2674,7 +2674,7 @@ where
 	/// Executes the given callback prividing it with a [`ChannelLock`], ensuring that no other
 	/// operation will be executed on the referenced channel at the same time, but does not check
 	/// whether the peer is connected or the channel is useable.
-	pub fn with_channel_lock_no_check<C, RV>(&self, channel_id: &[u8; 32], counter_party_node_id: &PublicKey, callback: C) -> Result<RV, APIError>
+	pub fn with_channel_lock_no_check<C, RV>(&self, channel_id: &ChannelId, counter_party_node_id: &PublicKey, callback: C) -> Result<RV, APIError>
 		where
 		C: FnOnce(&mut ChannelLock<SP>) -> Result<RV, APIError>
 	{
@@ -2685,7 +2685,7 @@ where
 
 		let mut peer_state_lock = peer_state_mutex.lock().unwrap();
 		let peer_state = &mut *peer_state_lock;
-		if let hash_map::Entry::Occupied(mut chan_entry) = peer_state.channel_by_id.entry(ChannelId(channel_id.clone())) {
+		if let hash_map::Entry::Occupied(mut chan_entry) = peer_state.channel_by_id.entry(*channel_id) {
 			let chan = chan_entry.get_mut();
 
 			let channel = match chan {
