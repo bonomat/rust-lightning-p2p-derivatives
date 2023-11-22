@@ -2744,6 +2744,8 @@ where
 			channel_id: channel_lock.channel.context.channel_id(),
 			signature: *commitment_signature,
 			htlc_signatures: htlc_signatures.to_vec(),
+			#[cfg(taproot)]
+			partial_signature_with_nonce: None,
 		};
 
 		let chan = channel_lock.get_channel();
