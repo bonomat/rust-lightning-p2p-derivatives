@@ -1292,12 +1292,20 @@ impl<Signer: WriteableEcdsaChannelSigner> ChannelMonitor<Signer> {
 		if let Some(original) = inner.original_funding_info.as_ref() {
 			if fund_outpoint == original.0 {
 				inner.original_funding_info = None;
+				inner.onchain_tx_handler.channel_transaction_parameters.original_funding_outpoint = None;
 			}
 		} else {
-			inner.original_funding_info = Some((inner.funding_info.0.clone(), inner.funding_info.1.clone()));
+			let original_funding_txo = inner.funding_info.0;
+			let original_funding_script_pubkey = &inner.funding_info.1;
+
+			inner.original_funding_info = Some((original_funding_txo, original_funding_script_pubkey.clone()));
+			inner.onchain_tx_handler.channel_transaction_parameters.original_funding_outpoint = Some(original_funding_txo);
 		}
 		inner.outputs_to_watch.insert(fund_outpoint.txid, vec![(fund_outpoint.index as u32, script.clone())]);
+
 		inner.funding_info = (fund_outpoint, script.clone());
+		inner.onchain_tx_handler.channel_transaction_parameters.funding_outpoint = Some(fund_outpoint);
+
 		inner.channel_value_satoshis = channel_value_satoshis;
 		inner.onchain_tx_handler.signer.set_channel_value_satoshis(channel_value_satoshis);
 		script

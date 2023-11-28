@@ -2720,16 +2720,16 @@ where
 		let chan = channel_lock.get_channel();
 
 		let original_funding_txo = chan.context.get_original_funding_txo().unwrap();
+		if ChannelMonitorUpdateStatus::Completed != self.chain_monitor.update_channel_funding_txo(chan.context.get_original_funding_txo().unwrap(), *funding_outpoint, channel_value_satoshis) {
+			return Err(APIError::APIMisuseError { err: "Could not update channel funding transaction.".to_string() });
+		}
+
 		let monitor_update = chan.set_funding_outpoint(funding_outpoint, channel_value_satoshis, own_balance, true, &self.logger);
 		if let Some(monitor_update) = &monitor_update {
 			let update_res = self.chain_monitor.update_channel(original_funding_txo, monitor_update);
 			if ChannelMonitorUpdateStatus::Completed != update_res {
 				return Err(APIError::APIMisuseError { err: "Could not update channel funding outpoint.".to_string() });
 			}
-		}
-
-		if ChannelMonitorUpdateStatus::Completed != self.chain_monitor.update_channel_funding_txo(chan.context.get_original_funding_txo().unwrap(), *funding_outpoint, channel_value_satoshis) {
-			return Err(APIError::APIMisuseError { err: "Could not update channel funding transaction.".to_string() });
 		}
 
 		let res = chan.monitor_updating_restored(&self.logger, &self.node_signer, self.genesis_hash, &self.default_configuration, self.best_block.read().unwrap().height());

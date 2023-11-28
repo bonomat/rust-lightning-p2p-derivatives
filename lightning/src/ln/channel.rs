@@ -1076,8 +1076,7 @@ impl<SP: Deref> ChannelContext<SP> where SP::Target: SignerProvider  {
 		self.channel_transaction_parameters.original_funding_outpoint.or(self.get_funding_txo())
 	}
 
-	/// Set the funding output and value of the channel, returning a `ChannelMonitorUpdate`
-	/// containing a commitment for the new funding output if requested.
+	/// Set the funding output and value of the channel.
 	fn set_funding_outpoint(&mut self, funding_outpoint: &OutPoint, channel_value_satoshis: u64, own_balance: u64)
 	{
 		self.channel_value_satoshis = channel_value_satoshis;
