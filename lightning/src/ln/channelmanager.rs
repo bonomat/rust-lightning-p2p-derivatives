@@ -792,9 +792,10 @@ struct PendingInboundPayment {
 /// A structure holding a reference to a channel while under lock.
 pub struct ChannelLock<'a, SP: Deref> where SP::Target: SignerProvider {
 	channel: &'a mut Channel<SP>,
+	mon_update_blocked: bool,
 }
 
-impl<'a, SP: Deref> ChannelLock<'a, SP> where SP::Target: SignerProvider  {
+impl<'a, SP: Deref> ChannelLock<'a, SP> where SP::Target: SignerProvider {
 	fn get_channel(&mut self) -> &mut Channel<SP> {
 		self.channel
 	}
@@ -2644,7 +2645,18 @@ where
 				}
 			}
 
-			let mut lock = ChannelLock { channel };
+			let mon_update_blocked = {
+				let actions_blocking_raa_monitor_updates = &peer_state.actions_blocking_raa_monitor_updates;
+				let original_funding_txo = channel.context.get_original_funding_txo().unwrap();
+				let counterparty_node_id = channel.context.get_counterparty_node_id();
+				self.raa_monitor_updates_held(
+					actions_blocking_raa_monitor_updates,
+					original_funding_txo,
+					counterparty_node_id
+				)
+			};
+
+			let mut lock = ChannelLock { channel, mon_update_blocked };
 
 			let res = callback(&mut lock);
 			match res {
@@ -2682,7 +2694,17 @@ where
 				ChannelPhase::Funded(channel) => Ok(channel)
 			}?;
 
-			let mut lock = ChannelLock { channel };
+			let mon_update_blocked = {
+				let actions_blocking_raa_monitor_updates = &peer_state.actions_blocking_raa_monitor_updates;
+				let original_funding_txo = channel.context.get_original_funding_txo().unwrap();
+				let counterparty_node_id = channel.context.get_counterparty_node_id();
+				self.raa_monitor_updates_held(
+					actions_blocking_raa_monitor_updates,
+					original_funding_txo,
+					counterparty_node_id
+				)
+			};
+			let mut lock = ChannelLock { channel, mon_update_blocked };
 
 			callback(&mut lock)
 		} else {
@@ -2745,14 +2767,14 @@ where
 	}
 
 	fn revoke_and_ack_commitment_internal(&self, channel_lock: &mut ChannelLock<SP>, revoke_and_ack: &RevokeAndACK) -> Result<(), APIError> {
+		let mon_update_blocked = channel_lock.mon_update_blocked;
 		let chan = channel_lock.get_channel();
 
-		let original_funding_txo = chan.context.get_original_funding_txo().unwrap();
-
-		// TODO(holzeis): check if we have to consider hold_mon_update here.
-		let updates = chan.revoke_and_ack(revoke_and_ack, &self.fee_estimator, &self.logger, false).map_err(|e| APIError::APIMisuseError { err: format!("{:?}", e) })?;
+		let updates = chan.revoke_and_ack(revoke_and_ack, &self.fee_estimator, &self.logger, mon_update_blocked)
+			.map_err(|e| APIError::APIMisuseError { err: format!("{:?}", e) })?;
 
 		if let Some(monitor_updates) = &updates.1 {
+			let original_funding_txo = chan.context.get_original_funding_txo().unwrap();
 			if ChannelMonitorUpdateStatus::Completed != self.chain_monitor.update_channel(original_funding_txo, monitor_updates) {
 				return Err(APIError::APIMisuseError { err: "Could not update the channel".to_string() });
 			}
