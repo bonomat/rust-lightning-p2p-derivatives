@@ -5567,9 +5567,6 @@ impl<SP: Deref> Channel<SP> where
 
 	/// Begins the shutdown process, getting a message for the remote peer and returning all
 	/// holding cell HTLCs for payment failure.
-	///
-	/// May jump to the channel being fully shutdown (see [`Self::is_shutdown`]) in which case no
-	/// [`ChannelMonitorUpdate`] will be returned).
 	pub fn get_shutdown(&mut self, signer_provider: &SP, their_features: &InitFeatures,
 		target_feerate_sats_per_kw: Option<u32>, override_shutdown_script: Option<ShutdownScript>)
 	-> Result<(msgs::Shutdown, Option<ChannelMonitorUpdate>, Vec<(HTLCSource, PaymentHash)>), APIError>
@@ -5595,16 +5592,9 @@ impl<SP: Deref> Channel<SP> where
 			return Err(APIError::ChannelUnavailable{err: "Cannot begin shutdown while peer is disconnected or we're waiting on a monitor update, maybe force-close instead?".to_owned()});
 		}
 
-		// If we haven't funded the channel yet, we don't need to bother ensuring the shutdown
-		// script is set, we just force-close and call it a day.
-		let mut chan_closed = false;
-		if self.context.channel_state & !STATE_FLAGS < ChannelState::FundingSent as u32 {
-			chan_closed = true;
-		}
-
 		let update_shutdown_script = match self.context.shutdown_scriptpubkey {
 			Some(_) => false,
-			None if !chan_closed => {
+			None => {
 				// use override shutdown script if provided
 				let shutdown_scriptpubkey = match override_shutdown_script {
 					Some(script) => script,
@@ -5622,16 +5612,11 @@ impl<SP: Deref> Channel<SP> where
 				self.context.shutdown_scriptpubkey = Some(shutdown_scriptpubkey);
 				true
 			},
-			None => false,
 		};
 
 		// From here on out, we may not fail!
 		self.context.target_closing_feerate_sats_per_kw = target_feerate_sats_per_kw;
-		if self.context.channel_state & !STATE_FLAGS < ChannelState::FundingSent as u32 {
-			self.context.channel_state = ChannelState::ShutdownComplete as u32;
-		} else {
-			self.context.channel_state |= ChannelState::LocalShutdownSent as u32;
-		}
+		self.context.channel_state |= ChannelState::LocalShutdownSent as u32;
 		self.context.update_time_counter += 1;
 
 		let monitor_update = if update_shutdown_script {
