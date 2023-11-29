@@ -2560,7 +2560,8 @@ where
 
 		let mut failed_htlcs: Vec<(HTLCSource, PaymentHash)>;
 		let mut shutdown_result = None;
-		loop {
+
+		{
 			let per_peer_state = self.per_peer_state.read().unwrap();
 
 			let peer_state_mutex = per_peer_state.get(counterparty_node_id)
@@ -2571,10 +2572,11 @@ where
 
 			match peer_state.channel_by_id.entry(channel_id.clone()) {
 				hash_map::Entry::Occupied(mut chan_phase_entry) => {
+					let unbroadcasted_batch_funding_txid =
+						chan_phase_entry.get().context().unbroadcasted_batch_funding_txid();
 					if let ChannelPhase::Funded(chan) = chan_phase_entry.get_mut() {
 						let funding_txo_opt = chan.context.get_funding_txo();
 						let their_features = &peer_state.latest_features;
-						let unbroadcasted_batch_funding_txid = chan.context.unbroadcasted_batch_funding_txid();
 						let (shutdown_msg, mut monitor_update_opt, htlcs) =
 							chan.get_shutdown(&self.signer_provider, their_features, target_feerate_sats_per_1000_weight, override_shutdown_script)?;
 						failed_htlcs = htlcs;
@@ -2594,21 +2596,12 @@ where
 						if let Some(monitor_update) = monitor_update_opt.take() {
 							handle_new_monitor_update!(self, funding_txo_opt.unwrap(), monitor_update,
 								peer_state_lock, peer_state, per_peer_state, chan);
-							break;
 						}
-
-						if chan.is_shutdown() {
-							if let ChannelPhase::Funded(chan) = remove_channel_phase!(self, chan_phase_entry) {
-								if let Ok(channel_update) = self.get_channel_update_for_broadcast(&chan) {
-									peer_state.pending_msg_events.push(events::MessageSendEvent::BroadcastChannelUpdate {
-										msg: channel_update
-									});
-								}
-								self.issue_channel_close_events(&chan.context, ClosureReason::HolderForceClosed);
-								shutdown_result = Some((None, Vec::new(), unbroadcasted_batch_funding_txid));
-							}
-						}
-						break;
+					} else {
+						self.issue_channel_close_events(chan_phase_entry.get().context(), ClosureReason::HolderForceClosed);
+						failed_htlcs = Vec::new();
+						remove_channel_phase!(self, chan_phase_entry);
+						shutdown_result = Some((None, Vec::new(), unbroadcasted_batch_funding_txid));
 					}
 				},
 				hash_map::Entry::Vacant(_) => {
