@@ -252,8 +252,8 @@ where
 			(&*entropy_source, &*signer_provider),
 		) {
 			Ok((block_hash, channel_monitor)) => {
-				if channel_monitor.get_funding_txo().0.txid != txid
-					|| channel_monitor.get_funding_txo().0.index != index
+				if channel_monitor.get_original_funding_txo().0.txid != txid
+					|| channel_monitor.get_original_funding_txo().0.index != index
 				{
 					return Err(io::Error::new(
 						io::ErrorKind::InvalidData,
